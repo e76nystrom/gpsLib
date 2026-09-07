@@ -1,6 +1,5 @@
-#if !defined(EXTERN)
-#define EXTERN 1
-#endif	/* EXT */
+#if !defined(GPS_LIB_H)
+#define GPS_LIB_H
 
 inline void dbg0Set()
 {
@@ -28,6 +27,8 @@ inline void dbg1Clr()
 
 enum RCV_STATE {RCV_IDLE, RCV_GET_LEN, RCV_GET_DATA, RCV_TEXT};
 
+constexpr size_t RTK_BUF_SIZE = 1024;
+
 typedef struct S_RTK_DATA
 {
  RCV_STATE state;
@@ -37,7 +38,7 @@ typedef struct S_RTK_DATA
  int count;
  int len;
  int fil;
- char buf[1024];
+ char buf[RTK_BUF_SIZE];
  unsigned int t0Accum;
  int rxAccum;
  int rxCount;
@@ -78,30 +79,20 @@ typedef struct S_GPS_INFO
  boolean update;
 } T_GPS_INFO, *P_GPS_INFO;
 
-#if EXTERN
+inline char cons[5] = "PLBA";
+inline const char *names[] = {"GPS", "GLO", "BDS", "GAL"};
 
-#define EXT extern
-
-extern char cons[5];
-extern const char *names[4];
-
-#else
-
-#define EXT
-
-char cons[5] = "PLBA";
-const char *names[] = {"GPS", "GLO", "BDS", "GAL"};
-
+#if defined(DBG_PRT)
+inline int prt;
+inline uint32_t crcBuf[1024];
 #endif
 
-EXT uint32_t crcBuf[1024];
+inline T_RTK_DATA rtk;
 
-EXT T_RTK_DATA rtk;
+inline T_GPS_INFO gpsInfo;
 
-EXT T_GPS_INFO gpsInfo;
-
-EXT S_SAT_DATA satData[MAX_SAT];
-EXT int satIndex;
+inline S_SAT_DATA satData[MAX_SAT];
+inline int satIndex;
 
 void printHex(const uint8_t *data, size_t len);
 
@@ -113,13 +104,16 @@ int getHex(char **p0);
 
 void buildCRC24qTable();
 inline uint32_t crc24(uint32_t crc, unsigned char c);
-EXT uint32_t crc24qTable[256];
+inline uint32_t crc24qTable[256];
 
-void processRemData(void *data, size_t len);
+void pollSerial();
 void processSerial();
+void processRemData(void *data, size_t len);
 void gpsLoc();
 void gpsSat();
 
 #if defined(RTK_SEND)
 bool sendBinary(const uint8_t *data, size_t len);
 #endif	/* RTK_SEND */
+
+#endif

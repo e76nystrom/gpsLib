@@ -1,8 +1,62 @@
 #include <Arduino.h>
 #include "soc/gpio_reg.h"
+#include "cfg.h"
 #include "dbgPin.h"
-#define EXTERN 0
 #include "gpsLib.h"
+
+void pollSerial()
+{
+ if (rtk.state != RCV_IDLE)
+ {
+  if ((millis() - rtk.t0) > 100)
+  {
+   rtk.state = RCV_IDLE;
+   printf("receive timeout\n");
+  }
+ }
+
+ unsigned int t0 = millis();
+ if ((rtk.state == RCV_IDLE) && (rtk.t0Accum != 0) && (t0 - rtk.t0Accum) > 100)
+ {
+  rtk.t0Accum = 0;
+  rtk.rxCount = rtk.rxAccum;
+  rtk.rxAccum = 0;
+ }
+
+ if (rtk.svTmr != 0)
+ {
+  if ((millis() - rtk.svTmr) > 500)
+  {
+   printf("***svTmr\n");
+   rtk.svTmr = 0;
+
+   P_SAT_DATA data = satData;
+   for (int i = 0; i < satIndex; i++)
+   {
+    printf("%2d %3s sVid %2d elv %2d az %3d n %d ",
+           i, names[data->cons], data->sVid, data->elv, data->az, data->freqs);
+    auto f = data->sig;
+    for (int j = 0; j < data->freqs; j++)
+    {
+     printf("freq %d cno %d ", f->freq, f->cno);
+     f += 1;
+    }
+    printf("\n");
+    data += 1;
+   }
+
+   int total = 0;
+   int *p = rtk.svCount;
+   for (int i = 0; i < 4; i++)
+   {
+    total +=  *p;
+    printf("%2d ", *p);
+    *p++ = 0;
+   }
+   printf("%2d\n", total);
+  }
+ }
+}
 
 void processSerial()
 {
@@ -96,6 +150,7 @@ void processSerial()
      rtk.fil -= 1;
     rtk.buf[rtk.fil] = 0;
 
+    puts(rtk.buf);
     if (rtk.buf[0] == '$')
     {
      char *p2 = &rtk.buf[1];
@@ -107,13 +162,14 @@ void processSerial()
       if (c0 == '*')
       {
        rcvChk = getHex(&p2);
-       printf("chk %02x tmp %02x\n", chk, rcvChk);
+       // printf("chk %02x tmp %02x\n", chk, rcvChk);
        break;
       }
       chk ^= c0;
      }
      if (chk != rcvChk)
      {
+      printHex(reinterpret_cast<const u_int8_t *>(rtk.buf), rtk.fil);
       printf("checksum error\n");
       break;
      }
@@ -293,7 +349,7 @@ void gpsSat()
  printf("\n");
 }
 
-#if defined(RTK_RECV)
+//#if defined(RTK_RECV)
 
 void processRemData(void *data, size_t len)
 {
@@ -384,7 +440,7 @@ void processRemData(void *data, size_t len)
  }
 }
 
-#endif	/* RTK_RECV */
+//#endif	/* RTK_RECV */
 
 void printHex(const uint8_t *data, size_t len)
 {

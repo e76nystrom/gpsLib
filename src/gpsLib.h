@@ -82,9 +82,10 @@ typedef struct S_GPS_INFO
 inline char cons[5] = "PLBA";
 inline const char *names[] = {"GPS", "GLO", "BDS", "GAL"};
 
+inline uint32_t crcBuf[1024];
+
 #if defined(DBG_PRT)
 inline int prt;
-inline uint32_t crcBuf[1024];
 #endif
 
 inline T_RTK_DATA rtk;

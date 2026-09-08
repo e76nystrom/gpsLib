@@ -1,6 +1,8 @@
 #if !defined(GPS_LIB_H)
 #define GPS_LIB_H
 
+void dbgInit();
+
 inline void dbg0Set()
 {
  // GPIO.out_w1ts.val = (1 << DBG0_PIN));
@@ -117,4 +119,4 @@ void gpsSat();
 bool sendBinary(const uint8_t *data, size_t len);
 #endif	/* RTK_SEND */
 
-#endif
+#endif	/* GPS_LIB_H */

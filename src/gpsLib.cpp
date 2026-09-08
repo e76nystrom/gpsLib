@@ -4,6 +4,12 @@
 #include "dbgPin.h"
 #include "gpsLib.h"
 
+void dbgInit()
+{
+ pinMode(DBG0_PIN, OUTPUT);
+ pinMode(DBG1_PIN, OUTPUT);
+}
+
 void pollSerial()
 {
  if (rtk.state != RCV_IDLE)
@@ -60,6 +66,15 @@ void pollSerial()
 
 void processSerial()
 {
+ if (rtk.state != RCV_IDLE)
+ {
+  if ((millis() - rtk.t0) > 100)
+  {
+   rtk.state = RCV_IDLE;
+   printf("receive timeout\n");
+  }
+ }
+
  while (Serial2.available() > 0)
  {
   dbg1Set();

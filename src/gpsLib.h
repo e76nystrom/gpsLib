@@ -78,7 +78,7 @@ typedef struct S_GPS_INFO
  double lon;
  char fix;
  char sats;
- boolean update;
+ bool update;
 } T_GPS_INFO, *P_GPS_INFO;
 
 inline char cons[5] = "PLBA";
@@ -105,9 +105,13 @@ int getNum(char **p0, int n);
 int getNum(char **p0);
 int getHex(char **p0);
 
-void buildCRC24qTable();
-inline uint32_t crc24(uint32_t crc, unsigned char c);
 inline uint32_t crc24qTable[256];
+
+void buildCRC24qTable();
+inline uint32_t crc24(uint32_t crc, unsigned char c)
+{
+ return ((crc << 8) ^ crc24qTable[((crc >> 16) ^ c) & 0xFFu]) & 0xFFFFFFu;
+}
 
 void pollSerial();
 void processSerial();

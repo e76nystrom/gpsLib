@@ -503,11 +503,6 @@ void buildCRC24qTable()
  }
 }
 
-inline uint32_t crc24(const uint32_t crc, const unsigned char c)
-{
- return ((crc << 8) ^ crc24qTable[((crc >> 16) ^ c) & 0xFFu]) & 0xFFFFFFu;
-}
-
 char* nextArg(char* p0)
 {
  while (true)

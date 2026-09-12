@@ -6,7 +6,7 @@
 #include "soc/gpio_reg.h"
 #include "dbgPin.h"
 
-#endif	/* ARDUINO */
+#else
 
 #if defined(ESP_PLATFORM)
 
@@ -62,6 +62,8 @@ inline uint32_t micros()
 }
 
 #endif	/* PICO_BUILD */
+
+#endif	/* ARDUINO */
 
 #include "gpsLib.h"
 
@@ -132,10 +134,20 @@ void pollSerial()
 #define READ() Serial2.read()
 #define SEND_BINARY(buf, len) sendBinary(buf, len)
 #else
+
+#if defined(ESP_PLATFORM)
 #define AVAILABLE() len
 #define READ() *buf++; len -= 1
 #define SEND_BINARY(buf, len) send(sock, buf, len, MSG_DONTWAIT)
-#endif
+#endif	/* ESP_PLATFROM */
+
+#if defined(PICO_BUILD)
+#define AVAILABLE() uart_is_readable(uart1)
+#define READ() uart_getc(uart1)
+#define SEND_BINARY(buf, len) send(sock, buf, len, MSG_DONTWAIT)
+#endif	/* PICO_BUILD */
+
+#endif	/* ARDUINO */
 
 void PROCESS_SERIAL
 {
@@ -439,13 +451,17 @@ void gpsSat()
 
 #if defined(ARDUINO)
 #define WRITE() Serial2.write(ch)
-#endif  /* ARDUINO */
+#else
+
 #if defined(ESP_PLATFORM)
 #define WRITE() uart_write_bytes(UART_NUM_1, ptr, 1)
 #endif  /* ESP_PLATFORM */
+
 #if defined(PICO_BUILD)
 #define WRITE() uart_putc(uart1, ch)
 #endif  /* PICO_BUILD */
+
+#endif  /* ARDUINO */
 
 //#if defined(RTK_RECV)
 
@@ -541,128 +557,128 @@ void processRemData(void *data, size_t len)
 
 //#endif	/* RTK_RECV */
 
-// void printHex(const uint8_t *data, size_t len)
-// {
-//  int col = 0;
-//  for (size_t i = 0; i < len; i++)
-//  {
-//   if (col == 0)
-//   {
-//    printf("  %04X: ", static_cast<unsigned int>(i));
-//   }
-//   printf("%02X ", data[i]);
-//   col += 1;
-//   if (col == 16)
-//   {
-//    col = 0;
-//    printf("\n");
-//   }
-//  }
-//  if (col != 0)
-//   printf("\n");
-// }
+void printHex(const uint8_t *data, size_t len)
+{
+ int col = 0;
+ for (size_t i = 0; i < len; i++)
+ {
+  if (col == 0)
+  {
+   printf("  %04X: ", static_cast<unsigned int>(i));
+  }
+  printf("%02X ", data[i]);
+  col += 1;
+  if (col == 16)
+  {
+   col = 0;
+   printf("\n");
+  }
+ }
+ if (col != 0)
+  printf("\n");
+}
 
-// /* ── CRC-24Q constants ───────────────────────────────────────────────────── */
-//
-// #define CRC24Q_POLY      0x1864CFBu  /* Generator polynomial                 */
-// #define RTCM3_PREAMBLE   0xD3u       /* Mandatory first byte of every frame  */
-// #define RTCM3_HDR_LEN    3           /* Preamble + 2 length/reserved bytes   */
-// #define RTCM3_CRC_LEN    3           /* 24-bit CRC appended at end           */
-// #define RTCM3_MIN_FRAME  (RTCM3_HDR_LEN + RTCM3_CRC_LEN)
-//
-// /* ── CRC-24Q lookup table (generated once on first use) ─────────────────── */
-//
-// void buildCRC24qTable()
-// {
-//  for (uint32_t i = 0; i < 256; i++)
-//  {
-//   uint32_t crc = i << 16;
-//   for (int j = 0; j < 8; j++)
-//   {
-//    crc <<= 1;
-//    if (crc & 0x1000000u)
-//     crc ^= CRC24Q_POLY;
-//   }
-//   crc24qTable[i] = crc & 0xFFFFFFu;
-//  }
-// }
+/* ── CRC-24Q constants ───────────────────────────────────────────────────── */
 
-// char* nextArg(char* p0)
-// {
-//  while (true)
-//  {
-//   const char c0 = *p0;
-//   if (c0 == 0)
-//    break;
-//   p0 += 1;
-//   if (c0 == ',')
-//   {
-//    break;
-//   }
-//  }
-//  return p0;
-// }
-//
-// char *getNum(char *p0, int n, int *result)
-// {
-//  int val = 0;
-//  while (n > 0)
-//  {
-//   const char c1 = *p0++;
-//   val *= 10;
-//   val += c1 - '0';
-//   n -= 1;
-//  }
-//  *result = val;
-//  return p0;
-// }
-//
-// int getNum(char **p0, int n)
-// {
-//  char *p1 = *p0;
-//  int val = 0;
-//  while (n > 0)
-//  {
-//   const char c1 = *p1++;
-//   val *= 10;
-//   val += c1 - '0';
-//   n -= 1;
-//  }
-//  *p0 = p1;
-//  return val;
-// }
-//
-// int getNum(char **p0)
-// {
-//  char *p1 = *p0;
-//  int val = 0;
-//  while (true)
-//  {
-//   const char c1 = *p1++;
-//   if (c1 == ',' || c1 == 0)
-//    break;
-//   val *= 10;
-//   val += c1 - '0';
-//  }
-//  *p0 = p1;
-//  return val;
-// }
-//
-// int getHex(char **p0)
-// {
-//  char *p1 = *p0;
-//  int val = 0;
-//  while (true)
-//  {
-//   char c1 = *p1++;
-//   if (c1 <= ' ')
-//    break;
-//   val <<= 4;
-//   c1 -= '0';
-//   if (c1 > 9)
-//    c1 -= 'A' - ('9' + 1);
-//   val += c1;
-//  }
-//  *p0 = p1;
-//  return val;
-// }
+#define CRC24Q_POLY      0x1864CFBu  /* Generator polynomial                 */
+#define RTCM3_PREAMBLE   0xD3u       /* Mandatory first byte of every frame  */
+#define RTCM3_HDR_LEN    3           /* Preamble + 2 length/reserved bytes   */
+#define RTCM3_CRC_LEN    3           /* 24-bit CRC appended at end           */
+#define RTCM3_MIN_FRAME  (RTCM3_HDR_LEN + RTCM3_CRC_LEN)
+
+/* ── CRC-24Q lookup table (generated once on first use) ─────────────────── */
+
+void buildCRC24qTable()
+{
+ for (uint32_t i = 0; i < 256; i++)
+ {
+  uint32_t crc = i << 16;
+  for (int j = 0; j < 8; j++)
+  {
+   crc <<= 1;
+   if (crc & 0x1000000u)
+    crc ^= CRC24Q_POLY;
+  }
+  crc24qTable[i] = crc & 0xFFFFFFu;
+ }
+}
+
+char* nextArg(char* p0)
+{
+ while (true)
+ {
+  const char c0 = *p0;
+  if (c0 == 0)
+   break;
+  p0 += 1;
+  if (c0 == ',')
+  {
+   break;
+  }
+ }
+ return p0;
+}
+
+char *getNum(char *p0, int n, int *result)
+{
+ int val = 0;
+ while (n > 0)
+ {
+  const char c1 = *p0++;
+  val *= 10;
+  val += c1 - '0';
+  n -= 1;
+ }
+ *result = val;
+ return p0;
+}
+
+int getNum(char **p0, int n)
+{
+ char *p1 = *p0;
+ int val = 0;
+ while (n > 0)
+ {
+  const char c1 = *p1++;
+  val *= 10;
+  val += c1 - '0';
+  n -= 1;
+ }
+ *p0 = p1;
+ return val;
+}
+
+int getNum(char **p0)
+{
+ char *p1 = *p0;
+ int val = 0;
+ while (true)
+ {
+  const char c1 = *p1++;
+  if (c1 == ',' || c1 == 0)
+   break;
+  val *= 10;
+  val += c1 - '0';
+ }
+ *p0 = p1;
+ return val;
+}
+
+int getHex(char **p0)
+{
+ char *p1 = *p0;
+ int val = 0;
+ while (true)
+ {
+  char c1 = *p1++;
+  if (c1 <= ' ')
+   break;
+  val <<= 4;
+  c1 -= '0';
+  if (c1 > 9)
+   c1 -= 'A' - ('9' + 1);
+  val += c1;
+ }
+ *p0 = p1;
+ return val;
+}

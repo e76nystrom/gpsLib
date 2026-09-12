@@ -49,6 +49,7 @@ typedef struct S_RTK_DATA
  unsigned int t0Accum;
  int rxAccum;
  int rxCount;
+ unsigned int tData;
  int numSv;
  unsigned int svTmr;
  int svCount[4];

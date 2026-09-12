@@ -1,7 +1,10 @@
 #if !defined(GPS_LIB_H)
 #define GPS_LIB_H
 
+#if defined(ARDUINO)
+
 void dbgInit();
+#include "soc/gpio_reg.h"
 
 inline void dbg0Set()
 {
@@ -26,6 +29,8 @@ inline void dbg1Clr()
  // GPIO.out_w1tc.val = (1 << DBG1_PIN));
  REG_WRITE(GPIO_OUT_W1TC_REG, (1 << DBG1_PIN));
 }
+
+#endif
 
 enum RCV_STATE {RCV_IDLE, RCV_GET_LEN, RCV_GET_DATA, RCV_TEXT};
 
@@ -60,11 +65,11 @@ typedef struct S_FREQ_INFO
 
 typedef struct S_SAT_DATA
 {
- char cons;
+ int cons;
  char sVid;
  char elv;
  char az;
- char freqs;
+ int freqs;
  T_FREQ_INFO sig[MAX_SIG];
 } T_SAT_DATA, *P_SAT_DATA;
 
@@ -114,7 +119,12 @@ inline uint32_t crc24(uint32_t crc, unsigned char c)
 }
 
 void pollSerial();
-void processSerial();
+#if defined(ARDUINO)
+#define PROCESS_SERIAL processSerial()
+#else
+#define PROCESS_SERIAL processSerial(int sock, char *buf, size_t len)
+#endif  /* ARDUINO */
+void PROCESS_SERIAL;
 void processRemData(void *data, size_t len);
 void gpsLoc();
 void gpsSat();

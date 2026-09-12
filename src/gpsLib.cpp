@@ -1,14 +1,77 @@
+#include "cfg.h"
+
+#if defined(ARDUINO)
+
 #include <Arduino.h>
 #include "soc/gpio_reg.h"
-#include "cfg.h"
 #include "dbgPin.h"
+
+#endif	/* ARDUINO */
+
+#if defined(ESP_PLATFORM)
+
+#define dbg0Set()
+#define dbg0Clr()
+#define dbg1Set()
+#define dbg1Clr()
+
+#include <cstdio>
+#include <cstdint>
+#include <cstring>
+typedef uint8_t u_int8_t;
+
+#include "esp_timer.h"
+#include "driver/uart.h"
+
+uint32_t millis()
+{
+ return static_cast<uint32_t>(esp_timer_get_time() / 1000ULL);
+}
+
+inline uint32_t micros()
+{
+ return static_cast<uint32_t>(esp_timer_get_time());
+}
+
+#endif	/* ESP_PLATFORM */
+
+#if defined(PICO_BUILD)
+
+#include <cstdio>
+#include <cstdint>
+#include <cstring>
+#include <cstdlib>
+typedef uint8_t u_int8_t;
+
+#include "hardware/timer.h"
+#include "hardware/uart.h"
+
+#define dbg0Set()
+#define dbg0Clr()
+#define dbg1Set()
+#define dbg1Clr()
+
+uint32_t millis()
+{
+ return static_cast<uint32_t>(timer_time_us_64(timer_hw) / 1000ULL);
+}
+
+inline uint32_t micros()
+{
+ return static_cast<uint32_t>(timer_time_us_64(timer_hw));
+}
+
+#endif	/* PICO_BUILD */
+
 #include "gpsLib.h"
 
+#if defined(ARDUINO)
 void dbgInit()
 {
  pinMode(DBG0_PIN, OUTPUT);
  pinMode(DBG1_PIN, OUTPUT);
 }
+#endif
 
 void pollSerial()
 {
@@ -64,7 +127,17 @@ void pollSerial()
  }
 }
 
-void processSerial()
+#if defined(ARDUINO)
+#define AVAILABLE() Serial2.available()
+#define READ() Serial2.read()
+#define SEND_BINARY(buf, len) sendBinary(buf, len)
+#else
+#define AVAILABLE() len
+#define READ() *buf++; len -= 1
+#define SEND_BINARY(buf, len) send(sock, buf, len, MSG_DONTWAIT)
+#endif
+
+void PROCESS_SERIAL
 {
  if (rtk.state != RCV_IDLE)
  {
@@ -75,10 +148,10 @@ void processSerial()
   }
  }
 
- while (Serial2.available() > 0)
+ while (AVAILABLE() > 0)
  {
   dbg1Set();
-  unsigned char c = Serial2.read();
+  unsigned char c = READ();
   switch (rtk.state)
   {
   case RCV_IDLE:
@@ -92,7 +165,7 @@ void processSerial()
     rtk.fil = 1;
     rtk.t0 = millis();
     rtk.state = RCV_GET_LEN;
-    rtk.startTime = esp_timer_get_time();
+    rtk.startTime = micros();
    }
    else if (c == '$')
    {
@@ -134,7 +207,7 @@ void processSerial()
    rtk.len -= 1;
    if (rtk.len == 0)
    {
-    const auto msgT = static_cast<uint32_t>(esp_timer_get_time() - rtk.startTime);
+    const auto msgT = static_cast<uint32_t>(micros() - rtk.startTime);
     int type = (rtk.buf[3] << 4) | (rtk.buf[4] >> 4);
     rtk.rxAccum += rtk.fil;
     printf("rtkLen %4d type %4d rtkCRC %08x %5d %u\n",
@@ -364,6 +437,16 @@ void gpsSat()
  printf("\n");
 }
 
+#if defined(ARDUINO)
+#define WRITE() Serial2.write(ch)
+#endif  /* ARDUINO */
+#if defined(ESP_PLATFORM)
+#define WRITE() uart_write_bytes(UART_NUM_1, ptr, 1)
+#endif  /* ESP_PLATFORM */
+#if defined(PICO_BUILD)
+#define WRITE() uart_putc(uart1, ch)
+#endif  /* PICO_BUILD */
+
 //#if defined(RTK_RECV)
 
 void processRemData(void *data, size_t len)
@@ -372,16 +455,16 @@ void processRemData(void *data, size_t len)
  while (len > 0)
  {
   len -= 1;
-  const char ch = *ptr++;
+  const char ch = *ptr;
   switch (rtk.state)
   {
   case RCV_IDLE:
    if (ch == 0xd3)
    {
     rtk.count = 2;
-    Serial2.write(ch);
+    WRITE();
     rtk.buf[0] = ch;
-    rtk.crc = crc24qTable[ch];
+    rtk.crc = crc24qTable[static_cast<int>(ch)];
     crcBuf[0] = rtk.crc;
     rtk.fil = 1;
     rtk.t0 = millis();
@@ -395,7 +478,7 @@ void processRemData(void *data, size_t len)
    break;
     
   case RCV_GET_LEN:
-   Serial2.write(ch);
+   WRITE();
    rtk.crc = ((rtk.crc << 8) ^ crc24qTable[((rtk.crc >> 16) ^ ch) & 0xFFu]) & 0xFFFFFFu;
    crcBuf[rtk.fil] = rtk.crc;
    rtk.len = (rtk.len << 8) + ch;
@@ -419,7 +502,7 @@ void processRemData(void *data, size_t len)
    break;
 
   case RCV_GET_DATA:
-   Serial2.write(ch);
+   WRITE();
    rtk.crc = ((rtk.crc << 8) ^ crc24qTable[((rtk.crc >> 16) ^ ch) & 0xFFu]) & 0xFFFFFFu;
    crcBuf[rtk.fil] = rtk.crc;
    rtk.buf[rtk.fil] = ch;
@@ -452,133 +535,134 @@ void processRemData(void *data, size_t len)
    }
    break;
   }
+  ptr += 1;
  }
 }
 
 //#endif	/* RTK_RECV */
 
-void printHex(const uint8_t *data, size_t len)
-{
- int col = 0;
- for (size_t i = 0; i < len; i++)
- {
-  if (col == 0)
-  {
-   printf("  %04X: ", static_cast<unsigned int>(i));
-  }
-  printf("%02X ", data[i]);
-  col += 1;
-  if (col == 16)
-  {
-   col = 0;
-   printf("\n");
-  }
- }
- if (col != 0)
-  printf("\n");
-}
+// void printHex(const uint8_t *data, size_t len)
+// {
+//  int col = 0;
+//  for (size_t i = 0; i < len; i++)
+//  {
+//   if (col == 0)
+//   {
+//    printf("  %04X: ", static_cast<unsigned int>(i));
+//   }
+//   printf("%02X ", data[i]);
+//   col += 1;
+//   if (col == 16)
+//   {
+//    col = 0;
+//    printf("\n");
+//   }
+//  }
+//  if (col != 0)
+//   printf("\n");
+// }
 
-/* ── CRC-24Q constants ───────────────────────────────────────────────────── */
- 
-#define CRC24Q_POLY      0x1864CFBu  /* Generator polynomial                 */
-#define RTCM3_PREAMBLE   0xD3u       /* Mandatory first byte of every frame  */
-#define RTCM3_HDR_LEN    3           /* Preamble + 2 length/reserved bytes   */
-#define RTCM3_CRC_LEN    3           /* 24-bit CRC appended at end           */
-#define RTCM3_MIN_FRAME  (RTCM3_HDR_LEN + RTCM3_CRC_LEN)
- 
-/* ── CRC-24Q lookup table (generated once on first use) ─────────────────── */
- 
-void buildCRC24qTable()
-{
- for (uint32_t i = 0; i < 256; i++)
- {
-  uint32_t crc = i << 16;
-  for (int j = 0; j < 8; j++)
-  {
-   crc <<= 1;
-   if (crc & 0x1000000u)
-    crc ^= CRC24Q_POLY;
-  }
-  crc24qTable[i] = crc & 0xFFFFFFu;
- }
-}
+// /* ── CRC-24Q constants ───────────────────────────────────────────────────── */
+//
+// #define CRC24Q_POLY      0x1864CFBu  /* Generator polynomial                 */
+// #define RTCM3_PREAMBLE   0xD3u       /* Mandatory first byte of every frame  */
+// #define RTCM3_HDR_LEN    3           /* Preamble + 2 length/reserved bytes   */
+// #define RTCM3_CRC_LEN    3           /* 24-bit CRC appended at end           */
+// #define RTCM3_MIN_FRAME  (RTCM3_HDR_LEN + RTCM3_CRC_LEN)
+//
+// /* ── CRC-24Q lookup table (generated once on first use) ─────────────────── */
+//
+// void buildCRC24qTable()
+// {
+//  for (uint32_t i = 0; i < 256; i++)
+//  {
+//   uint32_t crc = i << 16;
+//   for (int j = 0; j < 8; j++)
+//   {
+//    crc <<= 1;
+//    if (crc & 0x1000000u)
+//     crc ^= CRC24Q_POLY;
+//   }
+//   crc24qTable[i] = crc & 0xFFFFFFu;
+//  }
+// }
 
-char* nextArg(char* p0)
-{
- while (true)
- {
-  const char c0 = *p0;
-  if (c0 == 0)
-   break;
-  p0 += 1;
-  if (c0 == ',')
-  {
-   break;
-  }
- }
- return p0;
-}
-
-char *getNum(char *p0, int n, int *result)
-{
- int val = 0;
- while (n > 0)
- {
-  const char c1 = *p0++;
-  val *= 10;
-  val += c1 - '0';
-  n -= 1;
- }
- *result = val;
- return p0;
-}
-
-int getNum(char **p0, int n)
-{
- char *p1 = *p0;
- int val = 0;
- while (n > 0)
- {
-  const char c1 = *p1++;
-  val *= 10;
-  val += c1 - '0';
-  n -= 1;
- }
- *p0 = p1;
- return val;
-}
-
-int getNum(char **p0)
-{
- char *p1 = *p0;
- int val = 0;
- while (true)
- {
-  const char c1 = *p1++;
-  if (c1 == ',' || c1 == 0)
-   break;
-  val *= 10;
-  val += c1 - '0';
- }
- *p0 = p1;
- return val;
-}
-
-int getHex(char **p0)
-{
- char *p1 = *p0;
- int val = 0;
- while (true)
- {
-  char c1 = *p1++;
-  if (c1 <= ' ')
-   break;
-  val <<= 4;
-  c1 -= '0';
-  if (c1 > 9)
-   c1 -= 'A' - ('9' + 1);
-  val += c1;
- }
- *p0 = p1;
- return val;
-}
+// char* nextArg(char* p0)
+// {
+//  while (true)
+//  {
+//   const char c0 = *p0;
+//   if (c0 == 0)
+//    break;
+//   p0 += 1;
+//   if (c0 == ',')
+//   {
+//    break;
+//   }
+//  }
+//  return p0;
+// }
+//
+// char *getNum(char *p0, int n, int *result)
+// {
+//  int val = 0;
+//  while (n > 0)
+//  {
+//   const char c1 = *p0++;
+//   val *= 10;
+//   val += c1 - '0';
+//   n -= 1;
+//  }
+//  *result = val;
+//  return p0;
+// }
+//
+// int getNum(char **p0, int n)
+// {
+//  char *p1 = *p0;
+//  int val = 0;
+//  while (n > 0)
+//  {
+//   const char c1 = *p1++;
+//   val *= 10;
+//   val += c1 - '0';
+//   n -= 1;
+//  }
+//  *p0 = p1;
+//  return val;
+// }
+//
+// int getNum(char **p0)
+// {
+//  char *p1 = *p0;
+//  int val = 0;
+//  while (true)
+//  {
+//   const char c1 = *p1++;
+//   if (c1 == ',' || c1 == 0)
+//    break;
+//   val *= 10;
+//   val += c1 - '0';
+//  }
+//  *p0 = p1;
+//  return val;
+// }
+//
+// int getHex(char **p0)
+// {
+//  char *p1 = *p0;
+//  int val = 0;
+//  while (true)
+//  {
+//   char c1 = *p1++;
+//   if (c1 <= ' ')
+//    break;
+//   val <<= 4;
+//   c1 -= '0';
+//   if (c1 > 9)
+//    c1 -= 'A' - ('9' + 1);
+//   val += c1;
+//  }
+//  *p0 = p1;
+//  return val;
+// }

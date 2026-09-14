@@ -3,6 +3,8 @@
 
 #if defined(ARDUINO)
 
+#include "dbgPin.h"
+
 void dbgInit();
 #include "soc/gpio_reg.h"
 
@@ -30,7 +32,71 @@ inline void dbg1Clr()
  REG_WRITE(GPIO_OUT_W1TC_REG, (1 << DBG1_PIN));
 }
 
-#endif
+#else
+
+#if defined(ESP_PLATFORM)
+
+#include "soc/gpio_reg.h"
+
+#define DBG0_PIN 2
+#define DBG1_PIN 4
+
+inline void dbg0Set()
+{
+    REG_WRITE(GPIO_OUT_W1TS_REG, (1 << DBG0_PIN));
+}
+
+inline void dbg0Clr()
+{
+ REG_WRITE(GPIO_OUT_W1TC_REG, (1 << DBG0_PIN));
+}
+
+inline void dbg1Set()
+{
+ REG_WRITE(GPIO_OUT_W1TS_REG, (1 << DBG1_PIN));
+}
+
+inline void dbg1Clr()
+{
+ REG_WRITE(GPIO_OUT_W1TC_REG, (1 << DBG1_PIN));
+}
+
+#endif	/* ESP_PLATFORM */
+
+#if defined(PICO_BUILD)
+
+#include "hardware/structs/sio.h"
+
+#define sio_hw ((sio_hw_t *)SIO_BASE)
+
+inline void dbg0Set()
+{
+ sio_hw->gpio_set = (1 << DBG0_PIN);
+}
+
+inline void dbg0Clr()
+{
+ sio_hw->gpio_clr = (1 << DBG0_PIN);
+}
+
+inline void dbg1Set()
+{
+ sio_hw->gpio_set = (1 << DBG1_PIN);
+}
+
+inline void dbg1Clr()
+{
+ sio_hw->gpio_clr = (1 << DBG1_PIN);
+}
+
+inline uint32_t usTime()
+{
+ return timer_hw->timerawl;
+}
+
+#endif	/* PICO_BUILD */
+
+#endif	/* ARDUINO */
 
 enum RCV_STATE {RCV_IDLE, RCV_GET_LEN, RCV_GET_DATA, RCV_TEXT};
 
@@ -120,11 +186,21 @@ inline uint32_t crc24(uint32_t crc, unsigned char c)
 }
 
 void pollSerial();
+
 #if defined(ARDUINO)
 #define PROCESS_SERIAL processSerial()
 #else
+
+#if defined(ESP_PLATFORM)
 #define PROCESS_SERIAL processSerial(int sock, char *buf, size_t len)
+#endif	/* ESP_PLATFORM */
+
+#if defined(PICO_BUILD)
+#define PROCESS_SERIAL processSerial(int sock)
+#endif	/* PICO_BUILD */
+
 #endif  /* ARDUINO */
+
 void PROCESS_SERIAL;
 void processRemData(void *data, size_t len);
 void gpsLoc();

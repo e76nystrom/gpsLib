@@ -1,6 +1,6 @@
-#include "cfg.h"
-
 #if defined(ARDUINO)
+
+#include "cfg.h"
 
 #include <Arduino.h>
 #include "soc/gpio_reg.h"
@@ -9,11 +9,6 @@
 #else
 
 #if defined(ESP_PLATFORM)
-
-#define dbg0Set()
-#define dbg0Clr()
-#define dbg1Set()
-#define dbg1Clr()
 
 #include <cstdio>
 #include <cstdint>
@@ -46,11 +41,6 @@ typedef uint8_t u_int8_t;
 #include "hardware/timer.h"
 #include "hardware/uart.h"
 
-#define dbg0Set()
-#define dbg0Clr()
-#define dbg1Set()
-#define dbg1Clr()
-
 uint32_t millis()
 {
  return static_cast<uint32_t>(timer_time_us_64(timer_hw) / 1000ULL);
@@ -68,12 +58,22 @@ inline uint32_t micros()
 #include "gpsLib.h"
 
 #if defined(ARDUINO)
+
 void dbgInit()
 {
  pinMode(DBG0_PIN, OUTPUT);
  pinMode(DBG1_PIN, OUTPUT);
 }
-#endif
+
+#else
+
+#if defined(ESP_PLATFORM)
+#endif	/* ESP_PLATFORM */
+
+#if defined(PICO_BUILD)
+#endif	/* PICO_BUILD */
+
+#endif	/* ARDUINO */
 
 void pollSerial()
 {

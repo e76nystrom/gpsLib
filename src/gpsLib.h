@@ -206,8 +206,6 @@ void processRemData(void *data, size_t len);
 void gpsLoc();
 void gpsSat();
 
-#if defined(RTK_SEND)
 bool sendBinary(const uint8_t *data, size_t len);
-#endif	/* RTK_SEND */
 
 #endif	/* GPS_LIB_H */

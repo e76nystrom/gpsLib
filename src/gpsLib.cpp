@@ -86,8 +86,8 @@ void pollSerial()
   }
  }
 
- unsigned int t0 = millis();
- if ((rtk.state == RCV_IDLE) && (rtk.t0Accum != 0) && (t0 - rtk.t0Accum) > 100)
+ if (unsigned int t0 = millis();
+     (rtk.state == RCV_IDLE) && (rtk.t0Accum != 0) && (t0 - rtk.t0Accum) > 100)
  {
   rtk.t0Accum = 0;
   rtk.rxCount = rtk.rxAccum;
@@ -136,15 +136,31 @@ void pollSerial()
 #else
 
 #if defined(ESP_PLATFORM)
+
+#include "lwip/sockets.h"
+
 #define AVAILABLE() len
 #define READ() *buf++; len -= 1
 #define SEND_BINARY(buf, len) send(sock, buf, len, MSG_DONTWAIT)
-#endif	/* ESP_PLATFROM */
+#endif	/* ESP_PLATFORM */
 
 #if defined(PICO_BUILD)
+
+#include "socket.h"
+
+#define SOCKET_TCP_SERVER 0
+#define SOCKET_TCP_CLIENT 1
 #define AVAILABLE() uart_is_readable(uart1)
 #define READ() uart_getc(uart1)
-#define SEND_BINARY(buf, len) send(sock, buf, len, MSG_DONTWAIT)
+
+#if defined(TCP_SERVER)
+#define SEND_BINARY(buf, len) send(SOCKET_TCP_CLIENT, buf, len)
+#endif	/* SERVER */
+
+#if defined(TCP_CLIENT)
+#define SEND_BINARY(buf, len) send(SOCKET_TCP_CLIENT, buf, len)
+#endif	/* CLIENT */
+
 #endif	/* PICO_BUILD */
 
 #endif	/* ARDUINO */
@@ -226,9 +242,7 @@ void PROCESS_SERIAL
            rtk.fil, type, static_cast<unsigned int>(rtk.crc), rtk.rxAccum,
            static_cast<unsigned int>(msgT));
     rtk.t0Accum = millis();
-#if defined(RTK_SEND)
-    sendBinary(reinterpret_cast<const uint8_t *>(rtk.buf), (ssize_t) rtk.fil);
-#endif	/* RTK_SEND */
+    SEND_BINARY(reinterpret_cast<uint8_t *>(rtk.buf), rtk.fil);
 
 #if defined(DBG_PRT)
     if (prt == 1)
@@ -368,8 +382,7 @@ void gpsSat()
   int freq = -1;
   for (int i = 0; i < 3; i++)
   {
-   const char c2 = *--txtEnd;
-   if (c2 == '*')
+   if (const char c2 = *--txtEnd; c2 == '*')
    {
     txtEnd -= 1;
     puts(txtEnd);
@@ -380,19 +393,19 @@ void gpsSat()
   printf("constellation %d %s freq %d\n", satCons, names[satCons], freq);
 
   char* p = nextArg(rtk.buf); /* skip name */
-  int numMsg = getNum(&p);
-  int msgNum = getNum(&p);
-  int numSv =  getNum(&p);
+  const int numMsg = getNum(&p);
+  const int msgNum = getNum(&p);
+  const int numSv =  getNum(&p);
   if (msgNum == 1)
    rtk.numSv = numSv;
   printf("numMsg %d msgNum %d numSv %d\n", numMsg, msgNum, numSv);
-  int n = rtk.numSv > 4 ? 4 : rtk.numSv;
+  const int n = rtk.numSv > 4 ? 4 : rtk.numSv;
   for (int i = 0; i < n; i++)
   {
-   int sVid = getNum(&p);
-   int elv = getNum(&p);
-   int az = getNum(&p);
-   int cno = getNum(&p);
+   const int sVid = getNum(&p);
+   const int elv = getNum(&p);
+   const int az = getNum(&p);
+   const int cno = getNum(&p);
    printf("%2d %2d sVid %2d elv %2d az %3d ", satIndex, rtk.numSv, sVid, elv, az);
 
    int j;
@@ -462,8 +475,6 @@ void gpsSat()
 #endif  /* PICO_BUILD */
 
 #endif  /* ARDUINO */
-
-//#if defined(RTK_RECV)
 
 void processRemData(void *data, size_t len)
 {
@@ -554,8 +565,6 @@ void processRemData(void *data, size_t len)
   ptr += 1;
  }
 }
-
-//#endif	/* RTK_RECV */
 
 void printHex(const uint8_t *data, size_t len)
 {

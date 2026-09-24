@@ -86,7 +86,7 @@ void pollSerial()
   }
  }
 
- if (unsigned int t0 = millis();
+ if (const unsigned int t0 = millis();
      (rtk.state == RCV_IDLE) && (rtk.t0Accum != 0) && (t0 - rtk.t0Accum) > 100)
  {
   rtk.t0Accum = 0;
@@ -130,6 +130,7 @@ void pollSerial()
 }
 
 #if defined(ARDUINO)
+#define GET_COUNT
 #define AVAILABLE() Serial2.available()
 #define READ() Serial2.read()
 #define SEND_BINARY(buf, len) sendBinary(buf, len)
@@ -139,6 +140,7 @@ void pollSerial()
 
 #include "lwip/sockets.h"
 
+#define GET_COUNT
 #define AVAILABLE() len
 #define READ() *buf++; len -= 1
 #define SEND_BINARY(buf, len) send(sock, buf, len, MSG_DONTWAIT)
@@ -150,15 +152,61 @@ void pollSerial()
 
 #define SOCKET_TCP_SERVER 0
 #define SOCKET_TCP_CLIENT 1
+
+#if defined(MULTI_CORE)
+
+//#define AVAILABLE() rtk.iCount
+
+inline int AVAILABLE()
+{
+ if (rtk.iCount > 0)
+  rtk.availCount += 1;
+ return rtk.iCount > 0;
+}
+
+inline char READ()
+{
+ int emp = rtk.iEmp;
+ char c = rtk.iBuf[emp++];
+ if (emp >= ISR_BUF_SIZE)
+  emp = 0;
+ rtk.iEmp = emp;
+ __atomic_fetch_sub(&rtk.iCount, 1, __ATOMIC_SEQ_CST);
+ rtk.readByteCount += 1;
+ return c;
+}
+
+#else
+
+#if defined(UART1_ISR)
+
+#define AVAILABLE() rtk.iCount
+
+inline char READ()
+{
+ int emp = rtk.iEmp;
+ char c = rtk.iBuf[emp++];
+ if (emp > ISR_BUF_SIZE)
+  emp = 0;
+ rtk.iEmp = emp;
+ __atomic_fetch_sub(&rtk.iCount, 1, __ATOMIC_SEQ_CST);
+ return c;
+}
+
+#else
+
 #define AVAILABLE() uart_is_readable(uart1)
 #define READ() uart_getc(uart1)
 
+#endif	/* UART1_ISR */
+#endif	/* MULTI_CORE */
+
 #if defined(TCP_SERVER)
-#define SEND_BINARY(buf, len) send(SOCKET_TCP_CLIENT, buf, len)
+#define SEND_BINARY(buf, len) send(sock, buf, len)
 #endif	/* SERVER */
 
 #if defined(TCP_CLIENT)
-#define SEND_BINARY(buf, len) send(SOCKET_TCP_CLIENT, buf, len)
+#define SEND_BINARY(buf, len) send(sock, buf, len)
 #endif	/* CLIENT */
 
 #endif	/* PICO_BUILD */
@@ -176,10 +224,14 @@ void PROCESS_SERIAL
   }
  }
 
+#if defined(PICO_BUILD) || defined(MULTI_CORE)
+
+#endif	/* PICO_BUILD */
+
  while (AVAILABLE() > 0)
  {
   dbg1Set();
-  unsigned char c = READ();
+  const unsigned char c = READ();
   switch (rtk.state)
   {
   case RCV_IDLE:
@@ -231,29 +283,41 @@ void PROCESS_SERIAL
    rtk.crc = ((rtk.crc << 8) ^ crc24qTable[((rtk.crc >> 16) ^ c) & 0xFFu]) & 0xFFFFFFu;
    crcBuf[rtk.fil] = rtk.crc;
    rtk.buf[rtk.fil] = c;
-   rtk.fil += 1;
-   rtk.len -= 1;
-   if (rtk.len == 0)
+   if (rtk.fil < RTK_BUF_SIZE)	/* if room in bufffer */
    {
-    const auto msgT = static_cast<uint32_t>(micros() - rtk.startTime);
-    int type = (rtk.buf[3] << 4) | (rtk.buf[4] >> 4);
-    rtk.rxAccum += rtk.fil;
-    printf("rtkLen %4d type %4d rtkCRC %08x %5d %u\n",
-           rtk.fil, type, static_cast<unsigned int>(rtk.crc), rtk.rxAccum,
-           static_cast<unsigned int>(msgT));
-    rtk.t0Accum = millis();
-    SEND_BINARY(reinterpret_cast<uint8_t *>(rtk.buf), rtk.fil);
+    rtk.fil += 1;
+    rtk.len -= 1;
+    if (rtk.len == 0)
+    {
+     const auto msgT = static_cast<uint32_t>(micros() - rtk.startTime);
+     int type = (rtk.buf[3] << 4) | (rtk.buf[4] >> 4);
+     rtk.rxAccum += rtk.fil;
+     printf("rtkLen %4d type %4d rtkCRC %08x %5d %u\n",
+	    rtk.fil, type, static_cast<unsigned int>(rtk.crc), rtk.rxAccum,
+	    static_cast<unsigned int>(msgT));
+     rtk.t0Accum = millis();
+#if 1
+     const int32_t err = SEND_BINARY(reinterpret_cast<uint8_t *>(rtk.buf), rtk.fil);
+     if (err < 0)
+      printf("err %ld\n", err);
+#endif
 
 #if defined(DBG_PRT)
-    if (prt == 1)
-    {
-     printHex(reinterpret_cast<const u_int8_t *>(rtk.buf), rtk.fil);
-     printHex(reinterpret_cast<const u_int8_t *>(crcBuf), rtk.fil << 2);
-     prt = 0;
-    }
+     if (prt == 1)
+     {
+      printHex(reinterpret_cast<const u_int8_t *>(rtk.buf), rtk.fil);
+      printHex(reinterpret_cast<const u_int8_t *>(crcBuf), rtk.fil << 2);
+      prt = 0;
+     }
 #endif	/* DDBG_PRT */
-    dbg0Clr();
-    rtk.state = RCV_IDLE;
+     dbg0Clr();
+     rtk.state = RCV_IDLE;
+    }
+   }
+   else				/* buffer overflow */
+   {
+    rtk.fil = 0;
+    rtk.state = RCV_IDLE;	/* return to idle state */
    }
    break;
 
@@ -283,7 +347,7 @@ void PROCESS_SERIAL
      }
      if (chk != rcvChk)
      {
-      printHex(reinterpret_cast<const u_int8_t *>(rtk.buf), rtk.fil);
+      //printHex(reinterpret_cast<const u_int8_t *>(rtk.buf), rtk.fil);
       printf("checksum error\n");
       break;
      }
@@ -303,13 +367,25 @@ void PROCESS_SERIAL
    else
    {
     rtk.buf[rtk.fil] = c;
-    rtk.fil += 1;
+    if (rtk.fil < RTK_BUF_SIZE)
+     rtk.fil += 1;
+    else
+    {
+     rtk.fil = 0;
+     rtk.state = RCV_IDLE;
+    }
    }
    break;
-  }
+  }  // end switch (state)
+
   dbg1Clr();
- }
-}
+ }  // end while (AVAILABLE())
+
+#if defined(PICO_BUILD) && defined(MULTI_CORE)
+// __atomic_fetch_sub(&rtk.iCount, total, __ATOMIC_SEQ_CST);
+#endif	/* PICO_BUILD */
+
+}  // end PROCESS_SERIAL
 
 /* $GNGGA, 091628.00, 3844.78718183,N, 07755.96337656,W, 7,28,0.5,135.9670,M,-33.6653,M,,*44 */
 
@@ -461,6 +537,75 @@ void gpsSat()
  }
  printf("\n");
 }
+
+/*
+GP: GPS satellites
+GL: GLONASS satellites
+GA: Galileo satellites
+GB or BD: BeiDou satellites
+
+Total Messages: The total number of GSV sentences in the current cycle.
+
+Message Number: The current sentence number (1 to Total).
+ 
+Satellites in View: The total number of satellites currently visible to the receiver.
+ 
+Satellite Data Blocks: Up to four sets of four values each:
+PRN: The satellite's PRN (Pseudo-Random Noise) number.
+Elevation: The satellite's elevation in degrees (00–90).
+Azimuth: The satellite's azimuth in degrees from true north (000–359).
+SNR: The Signal-to-Noise Ratio in dB (00–99); this field may be empty
+     if the satellite is not currently tracked. 
+
+
+$GPGSV,2,1, 05, 29,05,194,31, 15,49,046,30, 18,75,200,44, 05,14,095,31, 1*6D
+$GPGSV,2,2, 05, 24,52,122,46, 1*53
+
+$GPGSV,1,1, 03, 29,05,194,33,18,75,200,42,24,52,122,39,4*55
+
+$GPGSV,1,1,03,18,75,200,49,23,56,321,31,24,52,122,47,8*59
+
+$GLGSV,1,1,04,71,51,018,26,86,59,197,46,72,49,281,32,73,00,000,29,1*71
+
+$GLGSV,1,1,03,86,59,197,42,72,49,281,31,73,00,000,30,3*44
+
+$GBGSV,2,1,06,11,14,172,38,20,42,051,32,29,30,189,49,22,24,265,32,1*7B
+$GBGSV,2,2,06,19,68,321,24,35,49,262,37,1*79
+
+$GBGSV,1,1,04,20,42,051,26,29,30,189,46,22,24,265,29,35,49,262,33,3*7F
+
+$GBGSV,2,1,06,11,14,172,35,20,42,051,25,29,30,189,42,12,60,033,27,8*74
+$GBGSV,2,2,06,22,24,265,35,35,49,262,36,8*70
+
+$GAGSV,2,1,06,19,89,120,30,28,57,222,47,33,49,140,47,04,32,225,42,1*7D
+$GAGSV,2,2,06,06,07,225,29,18,,,42,1*43
+
+$GAGSV,2,1,06,19,89,120,29,28,57,222,46,33,49,140,43,04,32,225,43,2*72
+$GAGSV,2,2,06,29,37,046,27,18,,,36,2*44
+
+$GAGSV,1,1,04,19,89,120,29,28,57,222,44,33,49,140,42,04,32,225,43,5*77
+
+$GAGSV,2,1,06,19,89,120,25,28,57,222,42,33,49,140,43,04,32,225,43,7*7F
+$GAGSV,2,2,06,06,07,225,22,18,,,42,7*4E
+
+GPS              GLONASS               Galileo          BeiDou (BDS)       
+ID Signal        ID Signal             ID Signal        ID Signal     
+0  All signals   0  All signals        0  All signals   0  All signals
+1  L1 C/A        1  G1 C/A             1  E5a           1  B1I        
+2  L1 P(Y)       2  G1 P               2  E5b           2  B1Q        
+3  L1 M          3  G2 C/A             3  E5 (a+b)      3  B1C        
+4  L2 P(Y)       4  G2 P (GLONASS-M)   4  E6-A          4  B1A        
+5  L2C-M         5–F Reserved          5  E6-BC         5  B2-a       
+6  L2C-L                               6  L1-A          6  B2-b       
+7  L5-I                                7  L1-BC         7  B2 (a+b)   
+8  L5-Q                                8–F Reserved     8  B3I         
+9–F Reserved                                            9  B3Q        
+                                                        A  B3A        
+                                                        B  B2I        
+                                                        C  B2Q        
+                                                        D–F Reserved   
+*/
+
 
 #if defined(ARDUINO)
 #define WRITE() Serial2.write(ch)

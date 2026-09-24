@@ -69,6 +69,8 @@ inline void dbg1Clr()
 
 #define sio_hw ((sio_hw_t *)SIO_BASE)
 
+#if defined(DBG0_PIN)
+
 inline void dbg0Set()
 {
  sio_hw->gpio_set = (1 << DBG0_PIN);
@@ -79,6 +81,10 @@ inline void dbg0Clr()
  sio_hw->gpio_clr = (1 << DBG0_PIN);
 }
 
+#endif	/* DBG0_PIN */
+
+#if defined(DBG1_PIN)
+
 inline void dbg1Set()
 {
  sio_hw->gpio_set = (1 << DBG1_PIN);
@@ -88,6 +94,22 @@ inline void dbg1Clr()
 {
  sio_hw->gpio_clr = (1 << DBG1_PIN);
 }
+
+#endif	/* DBG1_PIN */
+
+#if defined(DBG2_PIN)
+
+inline void dbg2Set()
+{
+ sio_hw->gpio_set = (1 << DBG2_PIN);
+}
+
+inline void dbg2Clr()
+{
+ sio_hw->gpio_clr = (1 << DBG2_PIN);
+}
+
+#endif	/* DBG2_PIN */
 
 inline uint32_t usTime()
 {
@@ -101,6 +123,7 @@ inline uint32_t usTime()
 enum RCV_STATE {RCV_IDLE, RCV_GET_LEN, RCV_GET_DATA, RCV_TEXT};
 
 constexpr size_t RTK_BUF_SIZE = 1024;
+constexpr size_t ISR_BUF_SIZE = 1024;
 
 typedef struct S_RTK_DATA
 {
@@ -112,6 +135,16 @@ typedef struct S_RTK_DATA
  int len;
  int fil;
  char buf[RTK_BUF_SIZE];
+ int iCount;
+ int iFil;
+ int iEmp;
+ int iOverRun;
+ char iBuf[ISR_BUF_SIZE];
+ int isrCount;
+ int isrByteCount;
+ int isrOverflowCount;
+ int readByteCount;
+ int availCount;
  unsigned int t0Accum;
  int rxAccum;
  int rxCount;

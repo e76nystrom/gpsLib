@@ -43,7 +43,7 @@ inline void dbg1Clr()
 
 inline void dbg0Set()
 {
-    REG_WRITE(GPIO_OUT_W1TS_REG, (1 << DBG0_PIN));
+ REG_WRITE(GPIO_OUT_W1TS_REG, (1 << DBG0_PIN));
 }
 
 inline void dbg0Clr()
@@ -66,6 +66,7 @@ inline void dbg1Clr()
 #if defined(PICO_BUILD)
 
 #include "hardware/structs/sio.h"
+#include "atomic"
 
 #define sio_hw ((sio_hw_t *)SIO_BASE)
 
@@ -111,6 +112,20 @@ inline void dbg2Clr()
 
 #endif	/* DBG2_PIN */
 
+#if defined(DBG3_PIN)
+
+inline void dbg3Set()
+{
+ sio_hw->gpio_set = (1 << DBG3_PIN);
+}
+
+inline void dbg3Clr()
+{
+ sio_hw->gpio_clr = (1 << DBG3_PIN);
+}
+
+#endif	/* DBG3_PIN */
+
 inline uint32_t usTime()
 {
  return timer_hw->timerawl;
@@ -120,26 +135,47 @@ inline uint32_t usTime()
 
 #endif	/* ARDUINO */
 
-enum RCV_STATE {RCV_IDLE, RCV_GET_LEN, RCV_GET_DATA, RCV_TEXT};
+enum RCV_STATE { RCV_IDLE, RCV_GET_LEN, RCV_GET_DATA, RCV_TEXT };
 
 constexpr size_t RTK_BUF_SIZE = 1024;
 constexpr size_t ISR_BUF_SIZE = 1024;
 
 typedef struct S_RTK_DATA
 {
- RCV_STATE state;
- unsigned int t0;
+ struct
+ {
+  RCV_STATE state;
+  unsigned int t;
+  int count;
+  int len;
+  int fil;
+  uint32_t crc;
+  char buf[RTK_BUF_SIZE];
+ } ser;
+
+ struct
+ {
+  RCV_STATE state;
+  unsigned int t;
+  int count;
+  int len;
+  int fil;
+  uint32_t crc;
+  char buf[RTK_BUF_SIZE];
+ } lan;
+
  uint64_t startTime;
- uint32_t crc;
- int count;
- int len;
- int fil;
- char buf[RTK_BUF_SIZE];
- int iCount;
- int iFil;
- int iEmp;
- int iOverRun;
+#if defined(PICO_BUILD)
+ //int iCount;
+ std::atomic<uint32_t> iFil; // {0};
+ std::atomic<uint32_t> iEmp; // {0};
  char iBuf[ISR_BUF_SIZE];
+ std::atomic<uint32_t> tFil; // {0};
+ std::atomic<uint32_t> tEmp; // {0};
+ char tBuf[ISR_BUF_SIZE];
+ int tIsrCount;
+#endif  /* PICO_BUILD */
+ int iOverRun;
  int isrCount;
  int isrByteCount;
  int isrOverflowCount;
@@ -187,7 +223,7 @@ typedef struct S_GPS_INFO
 } T_GPS_INFO, *P_GPS_INFO;
 
 inline char cons[5] = "PLBA";
-inline const char *names[] = {"GPS", "GLO", "BDS", "GAL"};
+inline const char* names[] = {"GPS", "GLO", "BDS", "GAL"};
 
 inline uint32_t crcBuf[1024];
 
@@ -202,17 +238,18 @@ inline T_GPS_INFO gpsInfo;
 inline S_SAT_DATA satData[MAX_SAT];
 inline int satIndex;
 
-void printHex(const uint8_t *data, size_t len);
+void printHex(const uint8_t* data, size_t len);
 
 char* nextArg(char* p0);
-char *getNum(char *p0, int n, int *result);
-int getNum(char **p0, int n);
-int getNum(char **p0);
-int getHex(char **p0);
+char* getNum(char* p0, int n, int* result);
+int getNum(char** p0, int n);
+int getNum(char** p0);
+int getHex(char** p0);
 
 inline uint32_t crc24qTable[256];
 
 void buildCRC24qTable();
+
 inline uint32_t crc24(uint32_t crc, unsigned char c)
 {
  return ((crc << 8) ^ crc24qTable[((crc >> 16) ^ c) & 0xFFu]) & 0xFFFFFFu;
@@ -235,10 +272,10 @@ void pollSerial();
 #endif  /* ARDUINO */
 
 void PROCESS_SERIAL;
-void processRemData(void *data, size_t len);
+void processRemData(void* data, size_t len);
 void gpsLoc();
 void gpsSat();
 
-bool sendBinary(const uint8_t *data, size_t len);
+bool sendBinary(const uint8_t* data, size_t len);
 
 #endif	/* GPS_LIB_H */

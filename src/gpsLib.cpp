@@ -1,3 +1,4 @@
+#include <sys/unistd.h>
 #if defined(ARDUINO)
 
 #include "cfg.h"
@@ -77,17 +78,17 @@ void dbgInit()
 
 void pollSerial()
 {
- if (rtk.state != RCV_IDLE)
+ if (rtk.ser.state != RCV_IDLE)
  {
-  if ((millis() - rtk.t0) > 100)
+  if ((millis() - rtk.ser.t) > 100)
   {
-   rtk.state = RCV_IDLE;
+   rtk.ser.state = RCV_IDLE;
    printf("receive timeout\n");
   }
  }
 
  if (const unsigned int t0 = millis();
-     (rtk.state == RCV_IDLE) && (rtk.t0Accum != 0) && (t0 - rtk.t0Accum) > 100)
+     (rtk.ser.state == RCV_IDLE) && (rtk.t0Accum != 0) && (t0 - rtk.t0Accum) > 100)
  {
   rtk.t0Accum = 0;
   rtk.rxCount = rtk.rxAccum;
@@ -148,7 +149,8 @@ void pollSerial()
 
 #if defined(PICO_BUILD)
 
-#include "socket.h"
+//#include "socket.h"
+extern "C" int32_t send(uint8_t sn, uint8_t* buf, uint16_t len);
 
 #define SOCKET_TCP_SERVER 0
 #define SOCKET_TCP_CLIENT 1
@@ -156,6 +158,27 @@ void pollSerial()
 #if defined(MULTI_CORE)
 
 //#define AVAILABLE() rtk.iCount
+
+#if defined(UART_ATOMIC)
+
+inline int AVAILABLE()
+{
+ const uint32_t emp = rtk.iEmp.load(std::memory_order_relaxed);
+ const uint32_t fil = rtk.iFil.load(std::memory_order_acquire);
+ return emp != fil;
+}
+
+inline char READ()
+{
+ uint32_t emp = rtk.iEmp.load(std::memory_order_relaxed);
+ char c = rtk.iBuf[emp++];
+ emp &= ISR_BUF_SIZE - 1;
+ rtk.iEmp.store(emp, std::memory_order_release);
+ rtk.readByteCount += 1;
+ return c;
+}
+
+#else
 
 inline int AVAILABLE()
 {
@@ -175,6 +198,8 @@ inline char READ()
  rtk.readByteCount += 1;
  return c;
 }
+
+#endif	/* UART_ATOMIC */
 
 #else
 
@@ -215,11 +240,11 @@ inline char READ()
 
 void PROCESS_SERIAL
 {
- if (rtk.state != RCV_IDLE)
+ if (rtk.ser.state != RCV_IDLE)
  {
-  if ((millis() - rtk.t0) > 100)
+  if ((millis() - rtk.ser.t) > 100)
   {
-   rtk.state = RCV_IDLE;
+   rtk.ser.state = RCV_IDLE;
    printf("receive timeout\n");
   }
  }
@@ -232,72 +257,72 @@ void PROCESS_SERIAL
  {
   dbg1Set();
   const unsigned char c = READ();
-  switch (rtk.state)
+  switch (rtk.ser.state)
   {
   case RCV_IDLE:
    if (c == 0xd3)
    {
     dbg0Set();
-    rtk.count = 2;
-    rtk.buf[0] = c;
-    rtk.crc = crc24qTable[c];
-    crcBuf[0] = rtk.crc;
-    rtk.fil = 1;
-    rtk.t0 = millis();
-    rtk.state = RCV_GET_LEN;
+    rtk.ser.count = 2;
+    rtk.ser.buf[0] = c;
+    rtk.ser.crc = crc24qTable[c];
+    crcBuf[0] = rtk.ser.crc;
+    rtk.ser.fil = 1;
+    rtk.ser.t = millis();
+    rtk.ser.state = RCV_GET_LEN;
     rtk.startTime = micros();
    }
    else if (c == '$')
    {
-    rtk.t0 = millis();
-    rtk.state = RCV_TEXT;
-    rtk.buf[0] = c;
-    rtk.fil = 1;
+    rtk.ser.t = millis();
+    rtk.ser.state = RCV_TEXT;
+    rtk.ser.buf[0] = c;
+    rtk.ser.fil = 1;
    }
    break;
 
   case RCV_GET_LEN:
-   rtk.crc = ((rtk.crc << 8) ^ crc24qTable[((rtk.crc >> 16) ^ c) & 0xFFu]) & 0xFFFFFFu;
-   crcBuf[rtk.fil] = rtk.crc;
-   rtk.len = (rtk.len << 8) + c;
-   rtk.buf[rtk.fil] = c;
-   rtk.fil += 1;
-   rtk.count -= 1;
-   if (rtk.count == 0)
+   rtk.ser.crc = ((rtk.ser.crc << 8) ^ crc24qTable[((rtk.ser.crc >> 16) ^ c) & 0xFFu]) & 0xFFFFFFu;
+   crcBuf[rtk.ser.fil] = rtk.ser.crc;
+   rtk.ser.len = (rtk.ser.len << 8) + c;
+   rtk.ser.buf[rtk.ser.fil] = c;
+   rtk.ser.fil += 1;
+   rtk.ser.count -= 1;
+   if (rtk.ser.count == 0)
    {
-    rtk.state = RCV_GET_DATA;
-    rtk.len &= 0x3ff;
-    // printf("rtkLen %d\n", rtk.len);
+    rtk.ser.state = RCV_GET_DATA;
+    rtk.ser.len &= 0x3ff;
+    // printf("rtkLen %d\n", rtk.ser.len);
 #if defined(DBG_PRT)
-    // if ((prt == 0) && (rtk.len == 19))
-    if (rtk.len == 19)
+    // if ((prt == 0) && (rtk.ser.len == 19))
+    if (rtk.ser.len == 19)
     {
      prt = 1;
     }
 #endif	/* DBG_PRT */
-    rtk.len += 3;
+    rtk.ser.len += 3;
    }
    break;
 
   case RCV_GET_DATA:
-   rtk.crc = ((rtk.crc << 8) ^ crc24qTable[((rtk.crc >> 16) ^ c) & 0xFFu]) & 0xFFFFFFu;
-   crcBuf[rtk.fil] = rtk.crc;
-   rtk.buf[rtk.fil] = c;
-   if (rtk.fil < RTK_BUF_SIZE)	/* if room in bufffer */
+   rtk.ser.crc = ((rtk.ser.crc << 8) ^ crc24qTable[((rtk.ser.crc >> 16) ^ c) & 0xFFu]) & 0xFFFFFFu;
+   crcBuf[rtk.ser.fil] = rtk.ser.crc;
+   rtk.ser.buf[rtk.ser.fil] = c;
+   if (rtk.ser.fil < RTK_BUF_SIZE)	/* if room in buffer */
    {
-    rtk.fil += 1;
-    rtk.len -= 1;
-    if (rtk.len == 0)
+    rtk.ser.fil += 1;
+    rtk.ser.len -= 1;
+    if (rtk.ser.len == 0)
     {
      const auto msgT = static_cast<uint32_t>(micros() - rtk.startTime);
-     int type = (rtk.buf[3] << 4) | (rtk.buf[4] >> 4);
-     rtk.rxAccum += rtk.fil;
+     int type = (rtk.ser.buf[3] << 4) | (rtk.ser.buf[4] >> 4);
+     rtk.rxAccum += rtk.ser.fil;
      printf("rtkLen %4d type %4d rtkCRC %08x %5d %u\n",
-	    rtk.fil, type, static_cast<unsigned int>(rtk.crc), rtk.rxAccum,
+	    rtk.ser.fil, type, static_cast<unsigned int>(rtk.ser.crc), rtk.rxAccum,
 	    static_cast<unsigned int>(msgT));
      rtk.t0Accum = millis();
 #if 1
-     const int32_t err = SEND_BINARY(reinterpret_cast<uint8_t *>(rtk.buf), rtk.fil);
+     const int32_t err = SEND_BINARY(reinterpret_cast<uint8_t *>(rtk.ser.buf), rtk.ser.fil);
      if (err < 0)
       printf("err %ld\n", err);
 #endif
@@ -305,36 +330,37 @@ void PROCESS_SERIAL
 #if defined(DBG_PRT)
      if (prt == 1)
      {
-      printHex(reinterpret_cast<const u_int8_t *>(rtk.buf), rtk.fil);
-      printHex(reinterpret_cast<const u_int8_t *>(crcBuf), rtk.fil << 2);
+      printHex(reinterpret_cast<const u_int8_t *>(rtk.ser.buf), rtk.ser.fil);
+      printHex(reinterpret_cast<const u_int8_t *>(crcBuf), rtk.ser.fil << 2);
       prt = 0;
      }
 #endif	/* DDBG_PRT */
      dbg0Clr();
-     rtk.state = RCV_IDLE;
+     rtk.ser.state = RCV_IDLE;
     }
    }
    else				/* buffer overflow */
    {
-    rtk.fil = 0;
-    rtk.state = RCV_IDLE;	/* return to idle state */
+    rtk.ser.fil = 0;
+    rtk.ser.state = RCV_IDLE;	/* return to idle state */
    }
    break;
 
   case RCV_TEXT:
+   rtk.ser.t = millis();
    if (c == '\n')
    {
-    if (rtk.buf[rtk.fil - 1] == '\r')
-     rtk.fil -= 1;
-    rtk.buf[rtk.fil] = 0;
+    if (rtk.ser.buf[rtk.ser.fil - 1] == '\r')
+     rtk.ser.fil -= 1;
+    rtk.ser.buf[rtk.ser.fil] = 0;
 
-    puts(rtk.buf);
-    if (rtk.buf[0] == '$')
+    puts(rtk.ser.buf);
+    if (rtk.ser.buf[0] == '$')
     {
-     char *p2 = &rtk.buf[1];
+     char *p2 = &rtk.ser.buf[1];
      char chk = 0;
      char rcvChk = 0xff;
-     for (int i = 0; i < (rtk.fil - 1); i++)
+     for (int i = 0; i < (rtk.ser.fil - 1); i++)
      {
       const char c0 = *p2++;
       if (c0 == '*')
@@ -347,32 +373,33 @@ void PROCESS_SERIAL
      }
      if (chk != rcvChk)
      {
-      //printHex(reinterpret_cast<const u_int8_t *>(rtk.buf), rtk.fil);
+      //printHex(reinterpret_cast<const u_int8_t *>(rtk.ser.buf), rtk.ser.fil);
       printf("checksum error\n");
       break;
      }
-     printf("%s\n", static_cast<const char *>(rtk.buf));
+     printf("%s\n", static_cast<const char *>(rtk.ser.buf));
 
-     if (strncmp(rtk.buf, "$GNGGA", 6) == 0)
+     if (strncmp(rtk.ser.buf, "$GNGGA", 6) == 0)
      {
       gpsLoc();
      }
-     else if (rtk.buf[1] == 'G' && strncmp(&rtk.buf[3], "GSV", 3) == 0)
+     else if (rtk.ser.buf[1] == 'G' && strncmp(&rtk.ser.buf[3], "GSV", 3) == 0)
      {
       gpsSat();
      }
     }
-    rtk.state = RCV_IDLE;
+    rtk.ser.state = RCV_IDLE;
    }
    else
    {
-    rtk.buf[rtk.fil] = c;
-    if (rtk.fil < RTK_BUF_SIZE)
-     rtk.fil += 1;
+    putchar(c);
+    rtk.ser.buf[rtk.ser.fil] = c;
+    if (rtk.ser.fil < RTK_BUF_SIZE)
+     rtk.ser.fil += 1;
     else
     {
-     rtk.fil = 0;
-     rtk.state = RCV_IDLE;
+     rtk.ser.fil = 0;
+     rtk.ser.state = RCV_IDLE;
     }
    }
    break;
@@ -381,17 +408,13 @@ void PROCESS_SERIAL
   dbg1Clr();
  }  // end while (AVAILABLE())
 
-#if defined(PICO_BUILD) && defined(MULTI_CORE)
-// __atomic_fetch_sub(&rtk.iCount, total, __ATOMIC_SEQ_CST);
-#endif	/* PICO_BUILD */
-
 }  // end PROCESS_SERIAL
 
 /* $GNGGA, 091628.00, 3844.78718183,N, 07755.96337656,W, 7,28,0.5,135.9670,M,-33.6653,M,,*44 */
 
 void gpsLoc()
 {
- char *p = nextArg(rtk.buf);
+ char *p = nextArg(rtk.ser.buf);
 
  char *p0 = p;
  char *p1 = gpsInfo.timeBuf;
@@ -441,7 +464,7 @@ void gpsSat()
  }
  rtk.svTmr = millis();
 
- char c0 = rtk.buf[2];
+ char c0 = rtk.ser.buf[2];
  int satCons = -1;
  for (int i = 0; i < sizeof(cons) - 1; i++)
  {
@@ -454,7 +477,7 @@ void gpsSat()
 
  if (satCons >= 0)
  {
-  const char* txtEnd = &rtk.buf[rtk.fil];
+  const char* txtEnd = &rtk.ser.buf[rtk.ser.fil];
   int freq = -1;
   for (int i = 0; i < 3; i++)
   {
@@ -468,7 +491,7 @@ void gpsSat()
   }
   printf("constellation %d %s freq %d\n", satCons, names[satCons], freq);
 
-  char* p = nextArg(rtk.buf); /* skip name */
+  char* p = nextArg(rtk.ser.buf); /* skip name */
   const int numMsg = getNum(&p);
   const int msgNum = getNum(&p);
   const int numSv =  getNum(&p);
@@ -616,7 +639,16 @@ ID Signal        ID Signal             ID Signal        ID Signal
 #endif  /* ESP_PLATFORM */
 
 #if defined(PICO_BUILD)
+
+#if defined(MULTI_CORE)
+
+bool queueUart(char c);
+
+#define WRITE() queueUart(ch)
+#else
 #define WRITE() uart_putc(uart1, ch)
+#endif	/* MULTI_CORE */
+
 #endif  /* PICO_BUILD */
 
 #endif  /* ARDUINO */
@@ -628,78 +660,78 @@ void processRemData(void *data, size_t len)
  {
   len -= 1;
   const char ch = *ptr;
-  switch (rtk.state)
+  switch (rtk.lan.state)
   {
   case RCV_IDLE:
    if (ch == 0xd3)
    {
-    rtk.count = 2;
+    rtk.lan.count = 2;
     WRITE();
-    rtk.buf[0] = ch;
-    rtk.crc = crc24qTable[static_cast<int>(ch)];
-    crcBuf[0] = rtk.crc;
-    rtk.fil = 1;
-    rtk.t0 = millis();
-    rtk.state = RCV_GET_LEN;
+    rtk.lan.buf[0] = ch;
+    rtk.lan.crc = crc24qTable[static_cast<int>(ch)];
+    crcBuf[0] = rtk.lan.crc;
+    rtk.lan.fil = 1;
+    rtk.lan.t = millis();
+    rtk.lan.state = RCV_GET_LEN;
    }
    else if (ch == '$')
    {
-    rtk.t0 = millis();
-    rtk.state = RCV_TEXT;
+    rtk.lan.t = millis();
+    rtk.lan.state = RCV_TEXT;
    }
    break;
     
   case RCV_GET_LEN:
    WRITE();
-   rtk.crc = ((rtk.crc << 8) ^ crc24qTable[((rtk.crc >> 16) ^ ch) & 0xFFu]) & 0xFFFFFFu;
-   crcBuf[rtk.fil] = rtk.crc;
-   rtk.len = (rtk.len << 8) + ch;
-   rtk.buf[rtk.fil] = ch;
-   rtk.fil += 1;
-   rtk.count -= 1;
-   if (rtk.count == 0)
+   rtk.lan.crc = ((rtk.lan.crc << 8) ^ crc24qTable[((rtk.lan.crc >> 16) ^ ch) & 0xFFu]) & 0xFFFFFFu;
+   crcBuf[rtk.lan.fil] = rtk.lan.crc;
+   rtk.lan.len = (rtk.lan.len << 8) + ch;
+   rtk.lan.buf[rtk.lan.fil] = ch;
+   rtk.lan.fil += 1;
+   rtk.lan.count -= 1;
+   if (rtk.lan.count == 0)
    {
-    rtk.state = RCV_GET_DATA;
-    rtk.len &= 0x3ff;
+    rtk.lan.state = RCV_GET_DATA;
+    rtk.lan.len &= 0x3ff;
     // printf("dLen %d\n", dLen);
 #if defined(DBG_PRT)
-    //if ((prt == 0) && (rtk.len == 19))
-    if (rtk.len == 19)
+    //if ((prt == 0) && (rtk.lan.len == 19))
+    if (rtk.lan.len == 19)
     {
      prt = 1;
     }
 #endif	/* DBG_PRT */
-    rtk.len += 3;
+    rtk.lan.len += 3;
    }
    break;
 
   case RCV_GET_DATA:
    WRITE();
-   rtk.crc = ((rtk.crc << 8) ^ crc24qTable[((rtk.crc >> 16) ^ ch) & 0xFFu]) & 0xFFFFFFu;
-   crcBuf[rtk.fil] = rtk.crc;
-   rtk.buf[rtk.fil] = ch;
-   rtk.fil += 1;
-   rtk.len -= 1;
-   if (rtk.len == 0)
+   rtk.lan.crc = ((rtk.lan.crc << 8) ^ crc24qTable[((rtk.lan.crc >> 16) ^ ch) & 0xFFu]) & 0xFFFFFFu;
+   crcBuf[rtk.lan.fil] = rtk.lan.crc;
+   rtk.lan.buf[rtk.lan.fil] = ch;
+   rtk.lan.fil += 1;
+   rtk.lan.len -= 1;
+   if (rtk.lan.len == 0)
    {
-    const int type = (rtk.buf[3] << 4) | (rtk.buf[4] >> 4);
-    printf("len %4d type %4d CRC %08x\n", rtk.fil, type, static_cast<unsigned int>(rtk.crc));
+    const int type = (rtk.lan.buf[3] << 4) | (rtk.lan.buf[4] >> 4);
+    printf("len %4d type %4d CRC %08x\n", rtk.lan.fil, type, static_cast<unsigned int>(rtk.lan.crc));
 #if defined(DBG_PRT)
     if (prt == 1)
     {
-     printHex(reinterpret_cast<const uint8_t *>(rtk.buf), rtk.fil);
-     printHex(reinterpret_cast<const uint8_t *>(crcBuf), rtk.fil << 2);
+     printHex(reinterpret_cast<const uint8_t *>(rtk.lan.buf), rtk.lan.fil);
+     printHex(reinterpret_cast<const uint8_t *>(crcBuf), rtk.lan.fil << 2);
      prt = 0;
     }
 #endif	/* DBG_PRT */
-    rtk.state = RCV_IDLE;
+    rtk.lan.state = RCV_IDLE;
    }
    break;
 
   case RCV_TEXT:
    if (ch == '\n')
    {
-    rtk.state = RCV_IDLE;
+    rtk.lan.state = RCV_IDLE;
    }
    else
    {
